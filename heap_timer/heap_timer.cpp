@@ -15,8 +15,8 @@ void TimerManager::swapNode_(size_t i, size_t j) {
     assert(i >= 0 && i < heap_.size());
     assert(j >= 0 && j < heap_.size());
     std::swap(heap_[i], heap_[j]);
-    ref_[heap_[i].id] = i;
-    ref_[heap_[j].id] = j;
+    ref_[heap_[i].sockfd] = i;
+    ref_[heap_[j].sockfd] = j;
 }
 
 bool TimerManager::siftdown_(size_t index, size_t n) {
@@ -48,7 +48,7 @@ void TimerManager::del_(size_t index) {
         }
     }
     /* 队尾元素删除 */
-    ref_.erase(heap_.back().id);
+    ref_.erase(heap_.back().sockfd);
     heap_.pop_back();
 }
 
@@ -62,12 +62,12 @@ void TimerManager::add_timer(int id, int timeout, const TimeoutCallBack& cb)
         /* 新节点：堆尾插入，调整堆 */
         i = heap_.size();
         ref_[id] = i;
-        heap_.push_back({id, Clock::now() + MS(timeout), cb});
+        heap_.push_back(TimerNode(id, std::chrono::system_clock::now() + MS(timeout), cb) );
         siftup_(i);
     } else {
         /* 已有结点：调整堆 */
         i = ref_[id];
-        heap_[i].expire = Clock::now() + MS(timeout);
+        heap_[i].expire = std::chrono::system_clock::to_time_t(Clock::now() + MS(timeout));
         heap_[i].cb = cb;
         if(!siftdown_(i, heap_.size())) {
             siftup_(i);
@@ -81,7 +81,7 @@ void TimerManager::update(int id, int timeout)
 {
     /* 调整指定id的结点 */
     assert(!heap_.empty() && ref_.count(id) > 0);
-    heap_[ref_[id]].expire = Clock::now() + MS(timeout);
+    heap_[ref_[id]].expire = std::chrono::system_clock::to_time_t(Clock::now() + MS(timeout));
     siftdown_(ref_[id], heap_.size());
 }
 
@@ -107,7 +107,8 @@ void TimerManager::handle_expired_event()
     }
     while(!heap_.empty()) {
         TimerNode node = heap_.front();
-        if(std::chrono::duration_cast<MS>(node.expire - Clock::now()).count() > 0) {
+        std::chrono::time_point<std::chrono::system_clock, std::chrono::seconds> tp(std::chrono::seconds(node.expire));
+        if(std::chrono::duration_cast<MS>(tp - Clock::now()).count() > 0) {
             break;
         }
         node.cb(node.sockfd);
@@ -121,7 +122,7 @@ void TimerManager::pop() {
 }
 
 int TimerManager::count(int id) {
-    return ref.count(id);
+    return ref_.count(id);
 }
 
 int TimerManager::getNextHandle()
@@ -129,7 +130,8 @@ int TimerManager::getNextHandle()
     handle_expired_event();
     size_t res = -1;
     if(!heap_.empty()) {
-        res = std::chrono::duration_cast<MS>(heap_.front().expire - Clock::now()).count();
+        std::chrono::time_point<std::chrono::system_clock, std::chrono::seconds> tp(std::chrono::seconds(heap_.front().expire));
+        res = std::chrono::duration_cast<MS>(tp - Clock::now()).count();
         if(res < 0) { res = 0; }
     }
     return res;
@@ -208,17 +210,3 @@ void Utils::show_error(int connfd, const char *info)
 
 int *Utils::u_pipefd = 0;
 int Utils::u_epollfd = 0;
-
-
-class Utils;
-
-//定时器回调函数:从内核事件表删除事件，关闭文件描述符，释放连接资源
-void cb_func(int fd)
-{
-    //删除非活动连接在socket上的注册事件
-    epoll_ctl(Utils::u_epollfd, EPOLL_CTL_DEL, fd, 0);
-    //删除非活动连接在socket上的注册事件
-    close(fd);
-    //减少连接数
-    http_conn::m_user_count -- ;
-}

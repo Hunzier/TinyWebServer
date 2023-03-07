@@ -180,20 +180,25 @@ void WebServer::eventListen()
     Utils::u_epollfd = m_epollfd;
 }
 
+//定时器回调函数:从内核事件表删除事件，关闭文件描述符，释放连接资源
+void cb_func(int fd)
+{
+    //删除非活动连接在socket上的注册事件
+    epoll_ctl(Utils::u_epollfd, EPOLL_CTL_DEL, fd, 0);
+    //删除非活动连接在socket上的注册事件
+    close(fd);
+    //减少连接数
+    http_conn::m_user_count -- ;
+}
+
+
 //创建一个定时器节点，将连接信息挂载
 void WebServer::timer(int connfd, struct sockaddr_in client_address)
 {
     users[connfd].init(connfd, client_address, m_root, m_CONNTrigmode, m_close_log, m_user, m_passWord, m_databaseName);
-
     //创建定时器，设置回调函数和超时时间，绑定用户数据，将定时器添加到heap中
-    TimerNode *timer = new TimerNode;
-
-    timer->sockfd = connfd;
-    timer->cb_func = cb_func;
     time_t cur = time(NULL);
-    //TIMESLOT:最小时间间隔单位为5s
-    timer->expire = cur + 3 * TIMESLOT;
-    utils.m_timer_heap.add_timer(timer);
+    utils.m_timer_heap.add_timer(connfd, cur + 3 * TIMESLOT, cb_func);
 }
 
 //若数据活跃，则将定时器节点往后延迟3个时间单位
@@ -209,7 +214,7 @@ void WebServer::adjust_timer(int fd)
 void WebServer::deal_timer(int sockfd)
 {
     utils.m_timer_heap.work(sockfd);
-    LOG_INFO("close fd %d", users_timer[sockfd].sockfd);
+    LOG_INFO("close fd %d", sockfd);
 }
 
 //http 处理用户数据
@@ -312,10 +317,10 @@ void WebServer::dealwithread(int sockfd)
     //reactor
     if (1 == m_actormodel)
     {
-        if ()
+        if (utils.m_timer_heap.count(sockfd))
         {
             //将定时器往后延迟3个单位
-            adjust_timer(timer);
+            adjust_timer(sockfd);
         }
 
         //若监测到读事件，将该事件放入请求队列
@@ -328,7 +333,7 @@ void WebServer::dealwithread(int sockfd)
                 //事件类型关闭连接
                 if (1 == users[sockfd].timer_flag)
                 {
-                    deal_timer(timer, sockfd);
+                    deal_timer(sockfd);
                     users[sockfd].timer_flag = 0;
                 }
                 users[sockfd].improv = 0;
@@ -345,14 +350,14 @@ void WebServer::dealwithread(int sockfd)
             LOG_INFO("deal with the client(%s)", inet_ntoa(users[sockfd].get_address()->sin_addr));
             //将该事件放入请求队列
             m_pool->append_p(users + sockfd);
-            if (timer)
+            if (utils.m_timer_heap.count(sockfd))
             {
-                adjust_timer(timer);
+                adjust_timer(sockfd);
             }
         }
         else
         {
-            deal_timer(timer, sockfd);
+            deal_timer(sockfd);
         }
     }
 }
@@ -360,13 +365,12 @@ void WebServer::dealwithread(int sockfd)
 //写操作
 void WebServer::dealwithwrite(int sockfd)
 {
-    util_timer *timer = users_timer[sockfd].timer;
     //reactor
     if (1 == m_actormodel)
     {
         if (utils.m_timer_heap.count(sockfd))
         {
-            adjust_timer(timer);
+            adjust_timer(sockfd);
         }
 
         m_pool->append(users + sockfd, 1);
@@ -377,7 +381,7 @@ void WebServer::dealwithwrite(int sockfd)
             {
                 if (1 == users[sockfd].timer_flag)
                 {
-                    deal_timer(timer, sockfd);
+                    deal_timer(sockfd);
                     users[sockfd].timer_flag = 0;
                 }
                 users[sockfd].improv = 0;
@@ -392,7 +396,7 @@ void WebServer::dealwithwrite(int sockfd)
         {
             LOG_INFO("send data to the client(%s)", inet_ntoa(users[sockfd].get_address()->sin_addr));
 
-            if (timer)
+            if (utils.m_timer_heap.count(sockfd))
             {
                 adjust_timer(sockfd);
             }
@@ -439,8 +443,7 @@ void WebServer::eventLoop()
             else if (events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR))
             {
                 //服务器端关闭连接，移除对应的定时器
-                util_timer *timer = users_timer[sockfd].timer;
-                deal_timer(timer, sockfd);
+                deal_timer(sockfd);
             }
             //处理定时器信号
             else if ((sockfd == m_pipefd[0]) && (events[i].events & EPOLLIN))

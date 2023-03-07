@@ -1,3 +1,6 @@
+#ifndef TIMER_NODE_H
+#define TIMER_NODE_H
+
 #include <unistd.h>
 #include <signal.h>
 #include <sys/types.h>
@@ -20,11 +23,11 @@
 #include <vector>
 #include <unordered_map>
 #include <functional>
+#include<chrono>
+#include<ctime>
 
-#include <time.h>
 #include "../log/log.h"
 #include "../http/http_conn.h"
-
 
 typedef std::function<void(int)> TimeoutCallBack;
 typedef std::chrono::high_resolution_clock Clock;
@@ -34,6 +37,14 @@ typedef Clock::time_point TimeStamp;
 //定时器类:以一个heap实现
 class TimerNode {
 public:
+        // 添加构造函数，将std::chrono::time_point类型的时间点转换为time_t类型
+    TimerNode() {}
+    TimerNode(int fd, std::chrono::time_point<std::chrono::system_clock> t, const TimeoutCallBack& c)
+    : sockfd(fd), cb(c)
+    {
+        expire = std::chrono::system_clock::to_time_t(t);
+    }
+
     int sockfd;             // fd
     time_t expire;          // 超时时间
     //回调函数:从内核事件表删除事件，关闭文件描述符，释放连接资源
@@ -46,8 +57,8 @@ public:
 //定时器容器类
 class TimerManager {
 public:
-    TimerManager() { heap_.reserve(64) };
-    ~TimerManager() {};
+    TimerManager() { heap_.reserve(64); }
+    ~TimerManager() {}
 
     //添加定时器，内部调用私有成员add_timer
     void add_timer(int id, int timeout, const TimeoutCallBack& cb);
@@ -78,8 +89,7 @@ private:
     void swapNode_(size_t i,size_t j);//交换两个结点位置
 };
 
-class Utils
-{
+class Utils {
 public:
     Utils() {}
     ~Utils() {}
@@ -110,3 +120,5 @@ public:
     static int u_epollfd;//epollfd
     int m_TIMESLOT;//最小时间间隙
 };
+
+#endif

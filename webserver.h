@@ -36,7 +36,7 @@ public:
     void eventListen();
     void eventLoop();
     void timer(int connfd, struct sockaddr_in client_address);
-    void adjust_timer(util_timer *timer);
+    void adjust_timer(int fd);
     void deal_timer(int sockfd);
     bool dealclinetdata();
     bool dealwithsignal(bool& timeout, bool& stop_server);
